@@ -1,0 +1,13 @@
+redis
+Flask
+gunicorn
+pyyaml
+protobuf
+requests
+numpy
+dill
+markupsafe==2.0.1
+seldon-core==1.15.1
+scikit-learn
+pandas
+mlflow==2.2.2

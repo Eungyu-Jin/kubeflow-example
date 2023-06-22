@@ -1,0 +1,24 @@
+{
+  "data": {
+      "ndarray": [
+          [
+            "Biscoe",
+            35.6,
+            15,
+            192,
+            3650,
+            "male",
+            2007
+          ]
+      ],
+      "names": [
+        "island",
+        "bill_length_mm",
+        "bill_depth_mm",
+        "flipper_length_mm",
+        "body_mass_g",
+        "sex",
+        "year"
+      ]
+  }
+}

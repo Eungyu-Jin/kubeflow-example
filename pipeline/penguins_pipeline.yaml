@@ -1,0 +1,451 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: penguins-pipeline-
+  annotations: {pipelines.kubeflow.org/kfp_sdk_version: 1.8.22, pipelines.kubeflow.org/pipeline_compilation_time: '2023-06-08T15:45:15.407137',
+    pipelines.kubeflow.org/pipeline_spec: '{"inputs": [{"default": "gini", "name":
+      "criterion", "optional": true, "type": "String"}, {"default": "300", "name":
+      "n_estimators", "optional": true, "type": "Integer"}, {"default": "3", "name":
+      "max_depth", "optional": true, "type": "Integer"}, {"default": "penguins-clf",
+      "name": "model_name", "optional": true, "type": "String"}], "name": "penguins-pipeline"}'}
+  labels: {pipelines.kubeflow.org/kfp_sdk_version: 1.8.22}
+spec:
+  entrypoint: penguins-pipeline
+  templates:
+  - name: dataprep
+    container:
+      args: []
+      command:
+      - sh
+      - -c
+      - (PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location
+        'palmerpenguins' || PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install
+        --quiet --no-warn-script-location 'palmerpenguins' --user) && "$0" "$@"
+      - sh
+      - -ec
+      - |
+        program_path=$(mktemp)
+        printf "%s" "$0" > "$program_path"
+        python3 -u "$program_path" "$@"
+      - |
+        def dataprep():
+            from palmerpenguins import load_penguins
+            import pandas as pd
+            raw_ds = load_penguins()
+            raw_ds.dropna(axis=0, inplace=True)
+            raw_ds.to_csv('/mnt/penguins-data.csv')
+
+            from sklearn.model_selection import train_test_split
+            train_ds, test_ds = train_test_split(raw_ds, test_size=0.2, random_state=47)
+
+            train_ds.to_csv('/mnt/train-ds.csv', index=False)
+            test_ds.to_csv('/mnt/test-ds.csv', index=False)
+
+        import argparse
+        _parser = argparse.ArgumentParser(prog='Dataprep', description='')
+        _parsed_args = vars(_parser.parse_args())
+
+        _outputs = dataprep(**_parsed_args)
+      image: 192.168.0.50:5100/penguins-base:0.1
+      volumeMounts:
+      - {mountPath: /mnt, name: data-mnt}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.8.22
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/component_spec: '{"implementation": {"container":
+          {"args": [], "command": ["sh", "-c", "(PIP_DISABLE_PIP_VERSION_CHECK=1 python3
+          -m pip install --quiet --no-warn-script-location ''palmerpenguins'' || PIP_DISABLE_PIP_VERSION_CHECK=1
+          python3 -m pip install --quiet --no-warn-script-location ''palmerpenguins''
+          --user) && \"$0\" \"$@\"", "sh", "-ec", "program_path=$(mktemp)\nprintf
+          \"%s\" \"$0\" > \"$program_path\"\npython3 -u \"$program_path\" \"$@\"\n",
+          "def dataprep():\n    from palmerpenguins import load_penguins\n    import
+          pandas as pd\n    raw_ds = load_penguins()\n    raw_ds.dropna(axis=0, inplace=True)\n    raw_ds.to_csv(''/mnt/penguins-data.csv'')\n\n    from
+          sklearn.model_selection import train_test_split\n    train_ds, test_ds =
+          train_test_split(raw_ds, test_size=0.2, random_state=47)\n\n    train_ds.to_csv(''/mnt/train-ds.csv'',
+          index=False)\n    test_ds.to_csv(''/mnt/test-ds.csv'', index=False)\n\nimport
+          argparse\n_parser = argparse.ArgumentParser(prog=''Dataprep'', description='''')\n_parsed_args
+          = vars(_parser.parse_args())\n\n_outputs = dataprep(**_parsed_args)\n"],
+          "image": "192.168.0.50:5100/penguins-base:0.1"}}, "name": "Dataprep"}',
+        pipelines.kubeflow.org/component_ref: '{}'}
+    volumes:
+    - name: data-mnt
+      persistentVolumeClaim: {claimName: pvc-penguins}
+  - name: metric
+    container:
+      args: [--model, /tmp/inputs/model/data, --mlpipeline-metrics, /tmp/outputs/mlpipeline_metrics/data]
+      command:
+      - sh
+      - -ec
+      - |
+        program_path=$(mktemp)
+        printf "%s" "$0" > "$program_path"
+        python3 -u "$program_path" "$@"
+      - "def _make_parent_dirs_and_return_path(file_path: str):\n    import os\n \
+        \   os.makedirs(os.path.dirname(file_path), exist_ok=True)\n    return file_path\n\
+        \ndef metric(\n    model_path,\n    # mlpipeline_ui_metadata_path: OutputPath(\"\
+        UI_Metadata\"),\n    mlpipeline_metrics_path\n):\n    import json\n    import\
+        \ pandas as pd\n    import dill\n    from sklearn.metrics import accuracy_score\n\
+        \n    test_ds = pd.read_csv('/mnt/train-ds.csv')\n    X_test = test_ds.iloc[:,1:]\n\
+        \    y_test = test_ds.iloc[:,0].values.ravel()\n\n    with open(model_path,\
+        \ mode=\"rb\") as f:\n        model = dill.load(f)\n\n    y_pred = model.predict(X_test)\n\
+        \n    metrics = {\n        'metrics': [\n            {\n                'name':\
+        \ 'oob-score',\n                'numberValue':  model['rf'].oob_score_,\n\
+        \                'format': 'RAW'\n            },\n            {\n        \
+        \        'name': 'accuracy-score',\n                'numberValue':  accuracy_score(y_pred,\
+        \ y_test),\n                'format': 'RAW'       \n            }\n      \
+        \  ]\n    }\n\n    with open(mlpipeline_metrics_path, 'w') as f:\n       \
+        \ json.dump(metrics, f)\n\n    # from sklearn.metrics import confusion_matrix\n\
+        \    # labels = model.classes_\n    # cm = confusion_matrix(\n    #     y_test,\n\
+        \    #     y_pred,\n    #     labels=labels\n    # )\n\n    # _cm = []\n \
+        \   # for target_index, target_row in enumerate(cm):\n    #     for predicted_index,\
+        \ count in enumerate(target_row):\n    #         _cm.append((labels[target_index],\
+        \ labels[predicted_index], count))\n\n    # df_cm = pd.DataFrame(_cm, columns=['target',\
+        \ 'predicted', 'count'])\n    # cm_file = 'confusion_matrix.csv'\n    # with\
+        \ open(cm_file, 'w') as f:\n    #     df_cm.to_csv(f, header=False, index=False)\n\
+        \n    # metadata = {\n    #     'outputs' : [{\n    #     'type': 'confusion_matrix',\n\
+        \    #     'format': 'csv',\n    #     'schema': [\n    #         {'name':\
+        \ 'target', 'type': 'CATEGORY'},\n    #         {'name': 'predicted', 'type':\
+        \ 'CATEGORY'},\n    #         {'name': 'count', 'type': 'NUMBER'},\n    #\
+        \     ],\n    #     'storage': \"inline\",\n    #     'source': cm_file,\n\
+        \    #     'labels': list(map(str, labels)),\n    #     }]\n    # }\n\n  \
+        \  # with open(mlpipeline_ui_metadata_path, 'w') as metadata_file:\n    #\
+        \     json.dump(metadata, metadata_file)\n\nimport argparse\n_parser = argparse.ArgumentParser(prog='Metric',\
+        \ description='')\n_parser.add_argument(\"--model\", dest=\"model_path\",\
+        \ type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"\
+        --mlpipeline-metrics\", dest=\"mlpipeline_metrics_path\", type=_make_parent_dirs_and_return_path,\
+        \ required=True, default=argparse.SUPPRESS)\n_parsed_args = vars(_parser.parse_args())\n\
+        \n_outputs = metric(**_parsed_args)\n"
+      image: 192.168.0.50:5100/penguins-base:0.1
+      volumeMounts:
+      - {mountPath: /mnt, name: data-mnt}
+    inputs:
+      artifacts:
+      - {name: trainer-model, path: /tmp/inputs/model/data}
+    outputs:
+      artifacts:
+      - {name: mlpipeline-metrics, path: /tmp/outputs/mlpipeline_metrics/data}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.8.22
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/component_spec: '{"implementation": {"container":
+          {"args": ["--model", {"inputPath": "model"}, "--mlpipeline-metrics", {"outputPath":
+          "mlpipeline_metrics"}], "command": ["sh", "-ec", "program_path=$(mktemp)\nprintf
+          \"%s\" \"$0\" > \"$program_path\"\npython3 -u \"$program_path\" \"$@\"\n",
+          "def _make_parent_dirs_and_return_path(file_path: str):\n    import os\n    os.makedirs(os.path.dirname(file_path),
+          exist_ok=True)\n    return file_path\n\ndef metric(\n    model_path,\n    #
+          mlpipeline_ui_metadata_path: OutputPath(\"UI_Metadata\"),\n    mlpipeline_metrics_path\n):\n    import
+          json\n    import pandas as pd\n    import dill\n    from sklearn.metrics
+          import accuracy_score\n\n    test_ds = pd.read_csv(''/mnt/train-ds.csv'')\n    X_test
+          = test_ds.iloc[:,1:]\n    y_test = test_ds.iloc[:,0].values.ravel()\n\n    with
+          open(model_path, mode=\"rb\") as f:\n        model = dill.load(f)\n\n    y_pred
+          = model.predict(X_test)\n\n    metrics = {\n        ''metrics'': [\n            {\n                ''name'':
+          ''oob-score'',\n                ''numberValue'':  model[''rf''].oob_score_,\n                ''format'':
+          ''RAW''\n            },\n            {\n                ''name'': ''accuracy-score'',\n                ''numberValue'':  accuracy_score(y_pred,
+          y_test),\n                ''format'': ''RAW''       \n            }\n        ]\n    }\n\n    with
+          open(mlpipeline_metrics_path, ''w'') as f:\n        json.dump(metrics, f)\n\n    #
+          from sklearn.metrics import confusion_matrix\n    # labels = model.classes_\n    #
+          cm = confusion_matrix(\n    #     y_test,\n    #     y_pred,\n    #     labels=labels\n    #
+          )\n\n    # _cm = []\n    # for target_index, target_row in enumerate(cm):\n    #     for
+          predicted_index, count in enumerate(target_row):\n    #         _cm.append((labels[target_index],
+          labels[predicted_index], count))\n\n    # df_cm = pd.DataFrame(_cm, columns=[''target'',
+          ''predicted'', ''count''])\n    # cm_file = ''confusion_matrix.csv''\n    #
+          with open(cm_file, ''w'') as f:\n    #     df_cm.to_csv(f, header=False,
+          index=False)\n\n    # metadata = {\n    #     ''outputs'' : [{\n    #     ''type'':
+          ''confusion_matrix'',\n    #     ''format'': ''csv'',\n    #     ''schema'':
+          [\n    #         {''name'': ''target'', ''type'': ''CATEGORY''},\n    #         {''name'':
+          ''predicted'', ''type'': ''CATEGORY''},\n    #         {''name'': ''count'',
+          ''type'': ''NUMBER''},\n    #     ],\n    #     ''storage'': \"inline\",\n    #     ''source'':
+          cm_file,\n    #     ''labels'': list(map(str, labels)),\n    #     }]\n    #
+          }\n\n    # with open(mlpipeline_ui_metadata_path, ''w'') as metadata_file:\n    #     json.dump(metadata,
+          metadata_file)\n\nimport argparse\n_parser = argparse.ArgumentParser(prog=''Metric'',
+          description='''')\n_parser.add_argument(\"--model\", dest=\"model_path\",
+          type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--mlpipeline-metrics\",
+          dest=\"mlpipeline_metrics_path\", type=_make_parent_dirs_and_return_path,
+          required=True, default=argparse.SUPPRESS)\n_parsed_args = vars(_parser.parse_args())\n\n_outputs
+          = metric(**_parsed_args)\n"], "image": "192.168.0.50:5100/penguins-base:0.1"}},
+          "inputs": [{"name": "model", "type": "dill"}], "name": "Metric", "outputs":
+          [{"name": "mlpipeline_metrics", "type": "Metrics"}]}', pipelines.kubeflow.org/component_ref: '{}'}
+    volumes:
+    - name: data-mnt
+      persistentVolumeClaim: {claimName: pvc-penguins}
+  - name: penguins-pipeline
+    inputs:
+      parameters:
+      - {name: criterion}
+      - {name: max_depth}
+      - {name: model_name}
+      - {name: n_estimators}
+    dag:
+      tasks:
+      - {name: dataprep, template: dataprep}
+      - name: metric
+        template: metric
+        dependencies: [trainer]
+        arguments:
+          artifacts:
+          - {name: trainer-model, from: '{{tasks.trainer.outputs.artifacts.trainer-model}}'}
+      - name: stack-mlflow
+        template: stack-mlflow
+        dependencies: [trainer]
+        arguments:
+          parameters:
+          - {name: model_name, value: '{{inputs.parameters.model_name}}'}
+          artifacts:
+          - {name: trainer-model, from: '{{tasks.trainer.outputs.artifacts.trainer-model}}'}
+      - name: trainer
+        template: trainer
+        dependencies: [dataprep]
+        arguments:
+          parameters:
+          - {name: criterion, value: '{{inputs.parameters.criterion}}'}
+          - {name: max_depth, value: '{{inputs.parameters.max_depth}}'}
+          - {name: n_estimators, value: '{{inputs.parameters.n_estimators}}'}
+  - name: stack-mlflow
+    container:
+      args: [--model-name, '{{inputs.parameters.model_name}}', --model, /tmp/inputs/model/data]
+      command:
+      - sh
+      - -ec
+      - |
+        program_path=$(mktemp)
+        printf "%s" "$0" > "$program_path"
+        python3 -u "$program_path" "$@"
+      - |
+        def stack_mlflow(
+            model_name,
+            model_path,
+        ):
+            import os
+            import dill
+            import pandas as pd
+
+            from mlflow.sklearn import save_model
+            from mlflow.tracking.client import MlflowClient
+            os.environ["MLFLOW_S3_ENDPOINT_URL"] = "http://minio-service.kubeflow.svc:9000"
+            os.environ["AWS_ACCESS_KEY_ID"] = "minio"
+            os.environ["AWS_SECRET_ACCESS_KEY"] = "minio123"
+
+            client = MlflowClient("http://mlflow-server-service.mlflow-system.svc:5000")
+
+            train_ds = pd.read_csv('/mnt/train-ds.csv')
+            X_train = train_ds.iloc[:,1:]
+
+            with open(model_path, mode="rb") as f:
+                model = dill.load(f)
+
+            from mlflow.models.signature import infer_signature
+            input_example = X_train.sample(1)
+            signature = infer_signature(X_train, model.predict(X_train))
+
+            save_model(
+                sk_model=model,
+                path=model_name,
+                serialization_format="cloudpickle",
+                signature=signature,
+                input_example=input_example,
+            )
+            run = client.create_run(experiment_id="0")
+            client.log_artifact(run.info.run_id, model_name)
+
+        import argparse
+        _parser = argparse.ArgumentParser(prog='Stack mlflow', description='')
+        _parser.add_argument("--model-name", dest="model_name", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--model", dest="model_path", type=str, required=True, default=argparse.SUPPRESS)
+        _parsed_args = vars(_parser.parse_args())
+
+        _outputs = stack_mlflow(**_parsed_args)
+      image: 192.168.0.50:5100/penguins-base:0.1
+      volumeMounts:
+      - {mountPath: /mnt, name: data-mnt}
+    inputs:
+      parameters:
+      - {name: model_name}
+      artifacts:
+      - {name: trainer-model, path: /tmp/inputs/model/data}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.8.22
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/component_spec: '{"implementation": {"container":
+          {"args": ["--model-name", {"inputValue": "model_name"}, "--model", {"inputPath":
+          "model"}], "command": ["sh", "-ec", "program_path=$(mktemp)\nprintf \"%s\"
+          \"$0\" > \"$program_path\"\npython3 -u \"$program_path\" \"$@\"\n", "def
+          stack_mlflow(\n    model_name,\n    model_path,\n):\n    import os\n    import
+          dill\n    import pandas as pd\n\n    from mlflow.sklearn import save_model\n    from
+          mlflow.tracking.client import MlflowClient\n    os.environ[\"MLFLOW_S3_ENDPOINT_URL\"]
+          = \"http://minio-service.kubeflow.svc:9000\"\n    os.environ[\"AWS_ACCESS_KEY_ID\"]
+          = \"minio\"\n    os.environ[\"AWS_SECRET_ACCESS_KEY\"] = \"minio123\"\n\n    client
+          = MlflowClient(\"http://mlflow-server-service.mlflow-system.svc:5000\")\n\n    train_ds
+          = pd.read_csv(''/mnt/train-ds.csv'')\n    X_train = train_ds.iloc[:,1:]\n\n    with
+          open(model_path, mode=\"rb\") as f:\n        model = dill.load(f)\n\n    from
+          mlflow.models.signature import infer_signature\n    input_example = X_train.sample(1)\n    signature
+          = infer_signature(X_train, model.predict(X_train))\n\n    save_model(\n        sk_model=model,\n        path=model_name,\n        serialization_format=\"cloudpickle\",\n        signature=signature,\n        input_example=input_example,\n    )\n    run
+          = client.create_run(experiment_id=\"0\")\n    client.log_artifact(run.info.run_id,
+          model_name)\n\nimport argparse\n_parser = argparse.ArgumentParser(prog=''Stack
+          mlflow'', description='''')\n_parser.add_argument(\"--model-name\", dest=\"model_name\",
+          type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--model\",
+          dest=\"model_path\", type=str, required=True, default=argparse.SUPPRESS)\n_parsed_args
+          = vars(_parser.parse_args())\n\n_outputs = stack_mlflow(**_parsed_args)\n"],
+          "image": "192.168.0.50:5100/penguins-base:0.1"}}, "inputs": [{"name": "model_name",
+          "type": "String"}, {"name": "model", "type": "dill"}], "name": "Stack mlflow"}',
+        pipelines.kubeflow.org/component_ref: '{}', pipelines.kubeflow.org/arguments.parameters: '{"model_name":
+          "{{inputs.parameters.model_name}}"}'}
+    volumes:
+    - name: data-mnt
+      persistentVolumeClaim: {claimName: pvc-penguins}
+  - name: trainer
+    container:
+      args: [--criterion, '{{inputs.parameters.criterion}}', --n-estimators, '{{inputs.parameters.n_estimators}}',
+        --max-depth, '{{inputs.parameters.max_depth}}', --model, /tmp/outputs/model/data]
+      command:
+      - sh
+      - -ec
+      - |
+        program_path=$(mktemp)
+        printf "%s" "$0" > "$program_path"
+        python3 -u "$program_path" "$@"
+      - |
+        def _make_parent_dirs_and_return_path(file_path: str):
+            import os
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            return file_path
+
+        def trainer(
+            criterion,
+            n_estimators,
+            max_depth,
+            model_path,
+        ):
+            import dill
+            import pandas as pd
+
+            def base(criterion, n_estimators, max_depth):
+                from sklearn.compose import ColumnTransformer
+                from sklearn.pipeline import Pipeline
+                from sklearn.preprocessing import StandardScaler, OneHotEncoder
+                from sklearn.ensemble import RandomForestClassifier
+
+                # numerical
+                nums = ['bill_length_mm', 'bill_depth_mm', 'flipper_length_mm', 'body_mass_g']
+                num_tfm = Pipeline(
+                    steps=[("scaler", StandardScaler())]
+                )
+                # categorical
+                cats = ["island", "sex"]
+                cat_tfm = Pipeline(
+                    steps=[
+                        ("encoder", OneHotEncoder(handle_unknown="ignore")),
+                    ]
+                )
+                # column merge
+                preprocessor = ColumnTransformer(
+                    transformers=[
+                        ("num", num_tfm, nums),
+                        ("cat", cat_tfm, cats),
+                    ]
+                )
+
+                base_model = Pipeline(
+                    steps=[
+                        ("prep", preprocessor),
+                        ("rf", RandomForestClassifier(
+                                criterion= criterion,
+                                n_estimators= n_estimators,
+                                max_depth= max_depth,
+                                oob_score=True,
+                                n_jobs = -1
+                            ))
+                    ]
+                )
+                return base_model
+
+            model = base(criterion, n_estimators, max_depth)
+
+            train_ds = pd.read_csv('/mnt/train-ds.csv')
+            X_train = train_ds.iloc[:,1:]
+            y_train = train_ds.iloc[:,0].values.ravel()
+
+            model.fit(X_train, y_train)
+
+            # save model
+            with open(model_path, 'wb') as f:
+                dill.dump(model, f)
+
+        import argparse
+        _parser = argparse.ArgumentParser(prog='Trainer', description='')
+        _parser.add_argument("--criterion", dest="criterion", type=str, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--n-estimators", dest="n_estimators", type=int, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--max-depth", dest="max_depth", type=int, required=True, default=argparse.SUPPRESS)
+        _parser.add_argument("--model", dest="model_path", type=_make_parent_dirs_and_return_path, required=True, default=argparse.SUPPRESS)
+        _parsed_args = vars(_parser.parse_args())
+
+        _outputs = trainer(**_parsed_args)
+      image: 192.168.0.50:5100/penguins-base:0.1
+      volumeMounts:
+      - {mountPath: /mnt, name: data-mnt}
+    inputs:
+      parameters:
+      - {name: criterion}
+      - {name: max_depth}
+      - {name: n_estimators}
+    outputs:
+      artifacts:
+      - {name: trainer-model, path: /tmp/outputs/model/data}
+    metadata:
+      labels:
+        pipelines.kubeflow.org/kfp_sdk_version: 1.8.22
+        pipelines.kubeflow.org/pipeline-sdk-type: kfp
+        pipelines.kubeflow.org/enable_caching: "true"
+      annotations: {pipelines.kubeflow.org/component_spec: '{"implementation": {"container":
+          {"args": ["--criterion", {"inputValue": "criterion"}, "--n-estimators",
+          {"inputValue": "n_estimators"}, "--max-depth", {"inputValue": "max_depth"},
+          "--model", {"outputPath": "model"}], "command": ["sh", "-ec", "program_path=$(mktemp)\nprintf
+          \"%s\" \"$0\" > \"$program_path\"\npython3 -u \"$program_path\" \"$@\"\n",
+          "def _make_parent_dirs_and_return_path(file_path: str):\n    import os\n    os.makedirs(os.path.dirname(file_path),
+          exist_ok=True)\n    return file_path\n\ndef trainer(\n    criterion,\n    n_estimators,\n    max_depth,\n    model_path,\n):\n    import
+          dill\n    import pandas as pd\n\n    def base(criterion, n_estimators, max_depth):\n        from
+          sklearn.compose import ColumnTransformer\n        from sklearn.pipeline
+          import Pipeline\n        from sklearn.preprocessing import StandardScaler,
+          OneHotEncoder\n        from sklearn.ensemble import RandomForestClassifier\n\n        #
+          numerical\n        nums = [''bill_length_mm'', ''bill_depth_mm'', ''flipper_length_mm'',
+          ''body_mass_g'']\n        num_tfm = Pipeline(\n            steps=[(\"scaler\",
+          StandardScaler())]\n        )\n        # categorical\n        cats = [\"island\",
+          \"sex\"]\n        cat_tfm = Pipeline(\n            steps=[\n                (\"encoder\",
+          OneHotEncoder(handle_unknown=\"ignore\")),\n            ]\n        )\n        #
+          column merge\n        preprocessor = ColumnTransformer(\n            transformers=[\n                (\"num\",
+          num_tfm, nums),\n                (\"cat\", cat_tfm, cats),\n            ]\n        )\n\n        base_model
+          = Pipeline(\n            steps=[\n                (\"prep\", preprocessor),\n                (\"rf\",
+          RandomForestClassifier(\n                        criterion= criterion,\n                        n_estimators=
+          n_estimators,\n                        max_depth= max_depth,\n                        oob_score=True,\n                        n_jobs
+          = -1\n                    ))\n            ]\n        )\n        return base_model\n\n    model
+          = base(criterion, n_estimators, max_depth)\n\n    train_ds = pd.read_csv(''/mnt/train-ds.csv'')\n    X_train
+          = train_ds.iloc[:,1:]\n    y_train = train_ds.iloc[:,0].values.ravel()\n\n    model.fit(X_train,
+          y_train)\n\n    # save model\n    with open(model_path, ''wb'') as f:\n        dill.dump(model,
+          f)\n\nimport argparse\n_parser = argparse.ArgumentParser(prog=''Trainer'',
+          description='''')\n_parser.add_argument(\"--criterion\", dest=\"criterion\",
+          type=str, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--n-estimators\",
+          dest=\"n_estimators\", type=int, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--max-depth\",
+          dest=\"max_depth\", type=int, required=True, default=argparse.SUPPRESS)\n_parser.add_argument(\"--model\",
+          dest=\"model_path\", type=_make_parent_dirs_and_return_path, required=True,
+          default=argparse.SUPPRESS)\n_parsed_args = vars(_parser.parse_args())\n\n_outputs
+          = trainer(**_parsed_args)\n"], "image": "192.168.0.50:5100/penguins-base:0.1"}},
+          "inputs": [{"name": "criterion", "type": "String"}, {"name": "n_estimators",
+          "type": "Integer"}, {"name": "max_depth", "type": "Integer"}], "name": "Trainer",
+          "outputs": [{"name": "model", "type": "dill"}]}', pipelines.kubeflow.org/component_ref: '{}',
+        pipelines.kubeflow.org/arguments.parameters: '{"criterion": "{{inputs.parameters.criterion}}",
+          "max_depth": "{{inputs.parameters.max_depth}}", "n_estimators": "{{inputs.parameters.n_estimators}}"}'}
+    volumes:
+    - name: data-mnt
+      persistentVolumeClaim: {claimName: pvc-penguins}
+  arguments:
+    parameters:
+    - {name: criterion, value: gini}
+    - {name: n_estimators, value: '300'}
+    - {name: max_depth, value: '3'}
+    - {name: model_name, value: penguins-clf}
+  serviceAccountName: pipeline-runner

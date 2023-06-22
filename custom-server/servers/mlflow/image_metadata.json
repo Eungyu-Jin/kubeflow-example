@@ -1,0 +1,22 @@
+{
+  "labels": [
+    {
+      "name": "Seldon MLFlow Server"
+    },
+    {
+      "vendor": "egjin"
+    },
+    {
+      "version": "0.1"
+    },
+    {
+      "release": "1"
+    },
+    {
+      "summary": "An MLFlow Model Server for Seldon Core"
+    },
+    {
+      "description": "The model server for MLFlow models"
+    }
+  ]
+}

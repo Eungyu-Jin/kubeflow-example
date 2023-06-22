@@ -1,0 +1,22 @@
+FROM python:3.8.10-slim
+
+WORKDIR /home/jovyan
+
+USER root
+COPY requirements.txt /tmp/requirements.txt
+
+RUN pip install -U pip
+RUN pip install -r /tmp/requirements.txt
+RUN pip install jupyterlab==3.6.3 && \
+    jupyter serverextension enable --py jupyterlab --sys-prefix
+
+ARG NB_USER=jovyan
+
+EXPOSE 8888
+
+ENV NB_USER $NB_USER
+ENV NB_UID=1000
+ENV HOME /home/$NB_USER
+ENV NB_PREFIX /
+
+CMD ["sh", "-c", "jupyter lab --notebook-dir=/home/jovyan --ip=0.0.0.0 --no-browser --allow-root --port=8888 --LabApp.token='' --LabApp.password='' --LabApp.allow_origin='*' --LabApp.base_url=${NB_PREFIX}"]

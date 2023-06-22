@@ -1,0 +1,48 @@
+apiVersion: machinelearning.seldon.io/v1
+kind: SeldonDeployment
+metadata:
+  name: penguins
+  namespace: model-deploy
+spec:
+  name: model-server
+  predictors:
+  - name: model-server
+    componentSpecs:
+    - spec:
+        volumes:
+        - name: model-provision-location
+          emptyDir: {}
+        initContainers:
+        - name: model-initializer
+          image: kfserving/storage-initializer:v0.6.1
+          args:
+            - "s3://mlflow/mlflow/artifacts/0/10e9bcb0ad1e4f138c2609d860211d27/artifacts/penguins-clf"
+            - "/mnt/models"
+          volumeMounts:
+          - mountPath: /mnt/models
+            name: model-provision-location
+          envFrom:
+          - secretRef:
+              name: s3secret
+        containers:
+        - name: model-server
+          image: 192.168.0.50:5100/seldon-mlflow:0.2
+          volumeMounts:
+          - mountPath: /mnt/models
+            name: model-provision-location
+            readOnly: true
+          securityContext:
+            privileged: true
+            runAsUser: 0
+            runAsGroup: 0
+    graph:
+      name: model-server
+      type: MODEL
+      parameters:
+      - name: model_uri
+        type: STRING
+        value: "/mnt/models"
+      - name: xtype
+        type: STRING
+        value: "dataframe"
+      children: []

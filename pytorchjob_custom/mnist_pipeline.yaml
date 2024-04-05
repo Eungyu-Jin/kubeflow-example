@@ -1,0 +1,189 @@
+# PIPELINE DEFINITION
+# Name: launch-kubeflow-pytorchjob
+# Description: An example to launch pytorch.
+# Inputs:
+#    namespace: str [Default: 'easy']
+#    worker_replicas: int [Default: 1.0]
+components:
+  comp-create-pytorchjob-task:
+    executorLabel: exec-create-pytorchjob-task
+    inputDefinitions:
+      parameters:
+        worker_num:
+          defaultValue: 0.0
+          isOptional: true
+          parameterType: NUMBER_INTEGER
+    outputDefinitions:
+      parameters:
+        master_spec:
+          parameterType: STRUCT
+        worker_spec:
+          parameterType: STRUCT
+  comp-pytorchjob-launcher:
+    executorLabel: exec-pytorchjob-launcher
+    inputDefinitions:
+      parameters:
+        master_spec:
+          parameterType: STRUCT
+        name:
+          parameterType: STRING
+        namespace:
+          parameterType: STRING
+        worker_spec:
+          parameterType: STRUCT
+deploymentSpec:
+  executors:
+    exec-create-pytorchjob-task:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - create_pytorchjob_task
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.7.0'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef create_pytorchjob_task(\n    worker_num: int = 0\n) -> NamedTuple('Outputs',\
+          \ [('master_spec', Dict[str, str]), ('worker_spec', Dict[str, str])]):\n\
+          \    \"\"\"\n    Creates pytorch-job worker spec\n    \"\"\"\n\n    master\
+          \ = {\n        \"replicas\": 1,\n        \"restartPolicy\": \"OnFailure\"\
+          ,\n        \"template\": {\n            \"metadata\": {\n              \
+          \  \"annotations\": {\n                    # See https://github.com/kubeflow/website/issues/2011\n\
+          \                    \"sidecar.istio.io/inject\": \"false\"\n          \
+          \      }\n            },\n            \"spec\": {\n                \"containers\"\
+          : [\n                    {\n                        # To override default\
+          \ command\n                        \"command\": [\n                    \
+          \      \"python\",\n                          \"/opt/mnist/src/mnist.py\"\
+          \n                        ],\n                        \"args\": [\n    \
+          \                        \"--backend\",\n                            \"\
+          nccl\",\n                        ],\n                        # Or, create\
+          \ your own image from\n                        # https://github.com/kubeflow/pytorch-operator/tree/master/examples/mnist\n\
+          \                        \"image\": \"public.ecr.aws/pytorch-samples/pytorch_dist_mnist:latest\"\
+          ,\n                        \"name\": \"pytorch\",\n                    \
+          \    \"resources\": {\n                            \"requests\": {\n   \
+          \                             \"memory\": \"4Gi\",\n                   \
+          \             \"cpu\": \"2000m\",\n                                # Uncomment\
+          \ for GPU\n                                \"nvidia.com/gpu\": 1,\n    \
+          \                        },\n                            \"limits\": {\n\
+          \                                \"memory\": \"4Gi\",\n                \
+          \                \"cpu\": \"2000m\",\n                                #\
+          \ Uncomment for GPU\n                                \"nvidia.com/gpu\"\
+          : 1,\n                            },\n                        },\n     \
+          \               }\n                ],\n                # If imagePullSecrets\
+          \ required\n                # \"imagePullSecrets\": [\n                #\
+          \     {\"name\": \"image-pull-secret\"},\n                # ],\n       \
+          \     },\n        },\n    }\n\n    worker = {}\n    if worker_num > 0:\n\
+          \        worker = {\n            \"replicas\": worker_num,\n           \
+          \ \"restartPolicy\": \"OnFailure\",\n            \"template\": {\n     \
+          \           \"metadata\": {\n                    \"annotations\": {\n  \
+          \                      \"sidecar.istio.io/inject\": \"false\"\n        \
+          \            }\n                },\n                \"spec\": {\n      \
+          \              \"containers\": [\n                        {\n          \
+          \                  \"command\": [\n                                \"python\"\
+          ,\n                                \"/opt/mnist/src/mnist.py\"\n       \
+          \                     ],\n                            \"args\": [\n    \
+          \                            \"--backend\",\n                          \
+          \      \"nccl\",\n                            ],\n                     \
+          \       \"image\": \"public.ecr.aws/pytorch-samples/pytorch_dist_mnist:latest\"\
+          ,\n                            \"name\": \"pytorch\",\n                \
+          \            \"resources\": {\n                                \"requests\"\
+          : {\n                                    \"memory\": \"4Gi\",\n        \
+          \                            \"cpu\": \"2000m\",\n                     \
+          \               # Uncomment for GPU\n                                  \
+          \  \"nvidia.com/gpu\": 1,\n                                },\n        \
+          \                        \"limits\": {\n                               \
+          \     \"memory\": \"4Gi\",\n                                    \"cpu\"\
+          : \"2000m\",\n                                    # Uncomment for GPU\n\
+          \                                    \"nvidia.com/gpu\": 1,\n          \
+          \                      },\n                            },\n            \
+          \            }\n                    ]\n                },\n            },\n\
+          \        }\n\n    output = NamedTuple('Outputs', [('master_spec', Dict[str,\
+          \ str]), ('worker_spec', Dict[str, str])])\n    return output(master, worker)\n\
+          \n"
+        image: python:3.7
+    exec-pytorchjob-launcher:
+      container:
+        args:
+        - --name
+        - '{{$.inputs.parameters[''name'']}}'
+        - --namespace
+        - '{{$.inputs.parameters[''namespace'']}}'
+        - --workerSpec
+        - '{{$.inputs.parameters[''worker_spec'']}}'
+        - --masterSpec
+        - '{{$.inputs.parameters[''master_spec'']}}'
+        - --deleteAfterDone
+        - 'False'
+        command:
+        - python
+        - /ml/launch_pytorchjob.py
+        image: easyjinbt/engine:custom-pytorchjob
+pipelineInfo:
+  description: An example to launch pytorch.
+  name: launch-kubeflow-pytorchjob
+root:
+  dag:
+    tasks:
+      create-pytorchjob-task:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-create-pytorchjob-task
+        inputs:
+          parameters:
+            worker_num:
+              componentInputParameter: worker_replicas
+        taskInfo:
+          name: create-pytorchjob-task
+      pytorchjob-launcher:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-pytorchjob-launcher
+        dependentTasks:
+        - create-pytorchjob-task
+        inputs:
+          parameters:
+            master_spec:
+              taskOutputParameter:
+                outputParameterKey: master_spec
+                producerTask: create-pytorchjob-task
+            name:
+              runtimeValue:
+                constant: name-pytorchjob-sample
+            namespace:
+              componentInputParameter: namespace
+            worker_spec:
+              taskOutputParameter:
+                outputParameterKey: worker_spec
+                producerTask: create-pytorchjob-task
+        taskInfo:
+          name: pytorchjob-launcher
+  inputDefinitions:
+    parameters:
+      namespace:
+        defaultValue: easy
+        isOptional: true
+        parameterType: STRING
+      worker_replicas:
+        defaultValue: 1.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.7.0
